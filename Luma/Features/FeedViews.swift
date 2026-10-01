@@ -23,6 +23,7 @@ struct FeedView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 22) {
                 if source == .home { masthead }
+                if let notice = page.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
                 if loading && page.videos.isEmpty { skeleton }
                 if let error { InlineError(message: error) { Task { await load() } } }
                 if !loading, error == nil, page.videos.isEmpty, page.channels.isEmpty, page.playlists.isEmpty {

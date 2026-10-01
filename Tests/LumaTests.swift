@@ -2,6 +2,14 @@ import XCTest
 @testable import Luma
 
 final class LumaTests: XCTestCase {
+    @MainActor
+    func testAnonymousSearchDecodesLiveYouTube() async throws {
+        let service = YouTubeService()
+        let page = try await service.feed(.search("Big Buck Bunny"))
+        XCTAssertFalse(page.videos.isEmpty, "The current YouTube response must decode into real videos")
+        XCTAssertTrue(page.videos.allSatisfy { VideoLink.validID($0.id) })
+    }
+
     func testVideoLinksAcceptRealHostsAndRejectLookalikes() {
         let id = "dQw4w9WgXcQ"
         for link in [id, "https://youtu.be/\(id)?t=30", "https://www.youtube.com/watch?v=\(id)&list=PLabc", "https://m.youtube.com/shorts/\(id)", "https://www.youtube.com/live/\(id)", "luma://watch/\(id)"] {

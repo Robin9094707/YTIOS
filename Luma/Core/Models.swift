@@ -33,6 +33,7 @@ struct VideoPage {
     var continuation: String?
     var channels: [YTChannel] = []
     var playlists: [YTPlaylist] = []
+    var notice: String?
 }
 
 enum FeedSource: Equatable {

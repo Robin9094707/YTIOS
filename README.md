@@ -34,7 +34,7 @@ Bei jedem Push auf `main` sowie manuell unter **Actions → Build Luma IPA → R
 
 1. macOS 26 mit Xcode und XcodeGen verwenden.
 2. Exakt gepinnte Open-Source-Abhängigkeiten vorbereiten und den App-Icon-Katalog generieren.
-3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten ausführen.
+3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten sowie eine echte anonyme YouTube-Suche ausführen.
 4. Die native Navigation im iPhone-Simulator testen und fünf Design-Screenshots erzeugen.
 5. Ein echtes **arm64-Gerätearchiv** erstellen und als IPA mit `Payload/Luma.app` verpacken.
 6. ZIP-Integrität, Bundle-ID und ausführbare Datei kontrollieren; SHA-256 erzeugen.

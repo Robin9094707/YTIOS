@@ -9,6 +9,8 @@ final class YouTubeService: ObservableObject {
     @Published private(set) var avatar: URL?
     @Published private(set) var sessionNeedsRenewal = false
     @Published private(set) var accountRevision = 0
+    private var homeUsesSearch = false
+    private let discoveryQuery = "Technik Musik Gaming"
     var signedIn: Bool { accountName != nil && !sessionNeedsRenewal }
 
     func bootstrap() async {
@@ -53,12 +55,26 @@ final class YouTubeService: ObservableObject {
     func feed(_ source: FeedSource, continuation: String? = nil) async throws -> VideoPage {
         switch source {
         case .home:
+            if continuation != nil && homeUsesSearch { return try await feed(.search(discoveryQuery), continuation: continuation) }
+            if continuation == nil && !signedIn {
+                homeUsesSearch = true
+                var page = try await feed(.search(discoveryQuery))
+                page.notice = "Öffentliche Entdeckungen · Verbinde dein Konto für deinen persönlichen Feed."
+                return page
+            }
             if let continuation {
                 let r = try await HomeScreenResponse.Continuation.sendThrowingRequest(youtubeModel: model, data: [.continuation: continuation])
                 return VideoPage(videos: r.results.map(Video.init).unique(), continuation: r.continuationToken)
             }
             let r = try await HomeScreenResponse.sendThrowingRequest(youtubeModel: model, data: [:])
             model.visitorData = r.visitorData ?? model.visitorData
+            if r.results.isEmpty {
+                homeUsesSearch = true
+                var page = try await feed(.search(discoveryQuery))
+                page.notice = "Dein Home-Feed ist gerade leer. Entdecke hier öffentliche Videos."
+                return page
+            }
+            homeUsesSearch = false
             return VideoPage(videos: r.results.map(Video.init).unique(), continuation: r.continuationToken)
         case .search(let query):
             if let continuation {
