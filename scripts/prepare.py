@@ -46,6 +46,9 @@ remote_file.write_text(remote_code)
 # An empty successful response must advance to the next extraction method too.
 stream_file = vendor / "Sources/YouTubeKit/YouTube.swift"
 stream_code = stream_file.read_text().replace('return streams\n#endif', 'guard !streams.isEmpty else { throw YouTubeKitError.extractError }\n                    return streams\n#endif')
+# This pinned package already defines Android VR, but does not query it in the
+# default client list. Include its direct adaptive formats alongside WEB/visionOS.
+stream_code = stream_code.replace('let innertubeClients: [InnerTube.ClientType] = [.visionOS, .web]', 'let innertubeClients: [InnerTube.ClientType] = [.visionOS, .web, .androidVR]')
 stream_code = stream_code.replace('return remoteStreams.compactMap { try? Stream(remoteStream: $0) }', '''let decoded = remoteStreams.compactMap { try? Stream(remoteStream: $0) }
                     guard !decoded.isEmpty else { throw YouTubeKitError.extractError }
                     return decoded''')
