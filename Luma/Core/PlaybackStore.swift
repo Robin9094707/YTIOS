@@ -9,6 +9,37 @@ struct PlaybackChoice: Identifiable {
     var id: String { url.absoluteString }
     let url: URL
     let label: String
+    var audioURL: URL? = nil
+    var height: Int? = nil
+}
+
+/// AVFoundation keeps separate adaptive video and audio tracks on one playback clock.
+enum NativeStreamPlayer {
+    static func item(for choice: PlaybackChoice) async throws -> AVPlayerItem {
+        guard let audioURL = choice.audioURL else { return AVPlayerItem(url: choice.url) }
+        let video = AVURLAsset(url: choice.url)
+        let audio = AVURLAsset(url: audioURL)
+        async let videoTracks = video.loadTracks(withMediaType: .video)
+        async let audioTracks = audio.loadTracks(withMediaType: .audio)
+        async let videoDuration = video.load(.duration)
+        async let audioDuration = audio.load(.duration)
+        guard let sourceVideo = try await videoTracks.first,
+              let sourceAudio = try await audioTracks.first else { throw AppFailure.noStream }
+        let length = try await CMTimeMinimum(videoDuration, audioDuration)
+        guard length.seconds.isFinite, length.seconds > 0 else { throw AppFailure.noStream }
+        try Task.checkCancellation()
+        let composition = AVMutableComposition()
+        guard let picture = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+              let sound = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw AppFailure.noStream
+        }
+        let range = CMTimeRange(start: .zero, duration: length)
+        try picture.insertTimeRange(range, of: sourceVideo, at: .zero)
+        try sound.insertTimeRange(range, of: sourceAudio, at: .zero)
+        picture.preferredTransform = try await sourceVideo.load(.preferredTransform)
+        try Task.checkCancellation()
+        return AVPlayerItem(asset: composition)
+    }
 }
 
 struct CaptionCue: Identifiable {
@@ -35,6 +66,8 @@ final class PlaybackStore: ObservableObject {
     @Published var captions: [CaptionCue] = []
     @Published var captionsEnabled = false
     private var loadTask: Task<Void, Never>?
+    private var itemTask: Task<Void, Never>?
+    private var itemToken = UUID()
     private var timeoutTask: Task<Void, Never>?
     private var sleepTask: Task<Void, Never>?
     private var itemObservation: NSKeyValueObservation?
@@ -92,7 +125,7 @@ final class PlaybackStore: ObservableObject {
 
     func connect(service: YouTubeService, library: LocalLibrary) { self.service = service; self.library = library }
     func open(_ video: Video) {
-        saveProgress(); loadTask?.cancel(); timeoutTask?.cancel()
+        saveProgress(); loadTask?.cancel(); itemTask?.cancel(); timeoutTask?.cancel()
         player.pause(); player.replaceCurrentItem(with: nil)
         token = UUID(); self.video = video; loading = true; error = nil
         choices = []; attemptedURLs = []; fallbackTried = false
@@ -134,22 +167,52 @@ final class PlaybackStore: ObservableObject {
         guard generation == token else { return }
         let supported = streams.filter { $0.includesVideoAndAudioTrack && $0.isNativelyPlayable }
             .sorted { ($0.videoResolution ?? 0) > ($1.videoResolution ?? 0) }
-        choices = supported.map { PlaybackChoice(url: $0.url, label: "\($0.videoResolution ?? 0)p · MP4") }
+        choices = supported.map { PlaybackChoice(url: $0.url, label: "\($0.videoResolution ?? 0)p · MP4", height: $0.videoResolution) }
+        let audio = streams.filter { $0.includesAudioTrack && !$0.includesVideoTrack && $0.audioCodec == .mp4a }
+            .max { ($0.averageBitrate ?? $0.bitrate ?? 0) < ($1.averageBitrate ?? $1.bitrate ?? 0) }
+        if let audio {
+            let pictures = streams.filter { $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1 }
+                .sorted { ($0.videoResolution ?? 0) > ($1.videoResolution ?? 0) }
+            choices += pictures.map {
+                PlaybackChoice(url: $0.url, label: "\($0.videoResolution ?? 0)p · Bild + Ton", audioURL: audio.url, height: $0.videoResolution)
+            }
+        }
         guard let choice = choices.first else { throw AppFailure.noStream }
-        install(choice, generation: generation)
+        let initial = choices.first(where: { ($0.height ?? 0) <= (quality > 0 ? quality : 1080) }) ?? choice
+        install(initial, generation: generation)
     }
 
     private func install(_ choice: PlaybackChoice, generation: UUID) {
         guard generation == token else { return }
         attemptedURLs.insert(choice.url)
-        timeoutTask?.cancel(); itemObservation = nil
-        let item = AVPlayerItem(url: choice.url)
+        timeoutTask?.cancel(); itemTask?.cancel(); itemObservation = nil
+        itemToken = UUID()
+        let request = itemToken
+        player.pause()
+        sourceLabel = choice.label; loading = true; error = nil
+        timeoutTask = Task {
+            try? await Task.sleep(for: .seconds(45))
+            guard !Task.isCancelled, generation == token, request == itemToken, loading else { return }
+            tryNextSource(generation: generation)
+        }
+        itemTask = Task {
+            do {
+                let item = try await NativeStreamPlayer.item(for: choice)
+                guard generation == token, request == itemToken, !Task.isCancelled else { return }
+                attach(item, generation: generation, request: request)
+            } catch {
+                guard generation == token, request == itemToken, !Task.isCancelled else { return }
+                tryNextSource(generation: generation)
+            }
+        }
+    }
+
+    private func attach(_ item: AVPlayerItem, generation: UUID, request: UUID) {
         item.preferredForwardBufferDuration = 12
         if quality > 0 { item.preferredMaximumResolution = CGSize(width: CGFloat(quality) * 16 / 9, height: CGFloat(quality)) }
-        sourceLabel = choice.label; loading = true; error = nil
-        itemObservation = item.observe(\.status, options: [.new]) { [weak self] item, _ in
+        itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
-                guard let self, generation == self.token, item === self.player.currentItem else { return }
+                guard let self, generation == self.token, request == self.itemToken, item === self.player.currentItem else { return }
                 switch item.status {
                 case .readyToPlay:
                     self.timeoutTask?.cancel(); self.loading = false
@@ -164,11 +227,6 @@ final class PlaybackStore: ObservableObject {
             }
         }
         player.replaceCurrentItem(with: item)
-        timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(30))
-            guard !Task.isCancelled, generation == token, loading else { return }
-            tryNextSource(generation: generation)
-        }
     }
 
     private func tryNextSource(generation: UUID) {
@@ -199,11 +257,17 @@ final class PlaybackStore: ObservableObject {
     func setQuality(_ height: Int) {
         quality = height
         player.currentItem?.preferredMaximumResolution = height > 0 ? CGSize(width: CGFloat(height)*16/9, height: CGFloat(height)) : .zero
+        // A composed MP4 has a fixed resolution; selecting a cap must replace its video track.
+        if player.currentItem?.asset is AVComposition,
+           let choice = choices.filter({ $0.audioURL != nil && ($0.height ?? 0) <= (height > 0 ? height : 1080) })
+            .max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) {
+            choose(choice)
+        }
     }
     func enqueue(_ video: Video) { if !queue.contains(where: { $0.id == video.id }) { queue.append(video) } }
     func next() { guard !queue.isEmpty else { return }; open(queue.removeFirst()) }
     func stop() {
-        saveProgress(); token = UUID(); loadTask?.cancel(); timeoutTask?.cancel(); sleepTask?.cancel()
+        saveProgress(); token = UUID(); loadTask?.cancel(); itemTask?.cancel(); timeoutTask?.cancel(); sleepTask?.cancel()
         itemObservation = nil; player.pause(); player.replaceCurrentItem(with: nil)
         video = nil; playing = false; loading = false; sleepMinutes = nil; captions = []
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil

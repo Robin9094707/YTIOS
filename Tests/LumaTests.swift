@@ -1,7 +1,39 @@
 import XCTest
+import AVFoundation
+import LumaStreams
 @testable import Luma
 
 final class LumaTests: XCTestCase {
+    @MainActor
+    func testAdaptivePublicVideoPlaysWithPictureAndSound() async throws {
+        executionTimeAllowance = 240
+        // Blender's public Big Buck Bunny video exercises YouTube's real adaptive streams.
+        let streams = try await LumaStreams.YouTube(videoID: "aqz-KE-bpKQ", methods: [.remote]).streams
+        let picture = try XCTUnwrap(streams.filter {
+            $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1 && ($0.videoResolution ?? 0) <= 480
+        }.max { ($0.videoResolution ?? 0) < ($1.videoResolution ?? 0) })
+        let sound = try XCTUnwrap(streams.first { $0.includesAudioTrack && !$0.includesVideoTrack && $0.audioCodec == .mp4a })
+        let item = try await NativeStreamPlayer.item(for: PlaybackChoice(url: picture.url, label: "Integration test", audioURL: sound.url))
+        let videoTracks = try await item.asset.loadTracks(withMediaType: .video)
+        let audioTracks = try await item.asset.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(videoTracks.count, 1)
+        XCTAssertEqual(audioTracks.count, 1)
+        let player = AVPlayer(playerItem: item)
+        defer { player.pause(); player.replaceCurrentItem(with: nil) }
+        for _ in 0..<60 {
+            if item.status != .unknown { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertEqual(item.status, .readyToPlay, item.error?.localizedDescription ?? "Player did not become ready")
+        guard item.status == .readyToPlay else { return }
+        player.play()
+        for _ in 0..<30 {
+            if player.currentTime().seconds >= 2 { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        XCTAssertGreaterThanOrEqual(player.currentTime().seconds, 2, "Both tracks must actually advance on AVPlayer's playback clock")
+    }
+
     @MainActor
     func testAnonymousSearchDecodesLiveYouTube() async throws {
         let service = YouTubeService()

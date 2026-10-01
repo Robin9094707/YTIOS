@@ -34,7 +34,7 @@ Bei jedem Push auf `main` sowie manuell unter **Actions → Build Luma IPA → R
 
 1. macOS 26 mit Xcode und XcodeGen verwenden.
 2. Exakt gepinnte Open-Source-Abhängigkeiten vorbereiten und den App-Icon-Katalog generieren.
-3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten sowie eine echte anonyme YouTube-Suche ausführen.
+3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten, eine echte anonyme YouTube-Suche sowie einen AVPlayer-Abspieltest mit getrennten Bild- und Tonstreams ausführen.
 4. Die native Navigation im iPhone-Simulator testen und fünf Design-Screenshots erzeugen.
 5. Ein echtes **arm64-Gerätearchiv** erstellen und als IPA mit `Payload/Luma.app` verpacken.
 6. ZIP-Integrität, Bundle-ID und ausführbare Datei kontrollieren; SHA-256 erzeugen.
@@ -61,8 +61,9 @@ Für eine Geräteinstallation in Xcode unter Signing die eigene Team-ID wählen 
 - [b5i/YouTubeKit](https://github.com/b5i/YouTubeKit), MIT, Commit `6532af39da4c1612b0a1af603792419d8fb0e67f`: nicht öffentliche YouTube-Endpunkte für Konto, Suche, Feeds und Aktionen.
 - [alexeichhorn/YouTubeKit](https://github.com/alexeichhorn/YouTubeKit), MIT, Commit `e5b7d0396ce12bf3444f0d209e8436c83373b7af`: Stream-Extraktion. Der Build benennt nur dessen Swift-Modul in `LumaStreams` um, da beide Bibliotheken denselben Modulnamen besitzen.
 - [Yattee](https://github.com/yattee/yattee): als Architekturvergleich untersucht; kein Yattee-Code übernommen.
+- [SmartTubeIOS](https://github.com/dnsnpl/smarttubeios): als Vergleich für native adaptive Wiedergabe untersucht; kein Code übernommen.
 
-Die Stream-Hilfe ist unter Einstellungen deaktivierbar. Falls lokale Extraktion scheitert, verwendet sie den öffentlichen Dienst `remote-production.youtubekit.dev`. Dieser erhält die Video-ID und öffentliche Antwortdaten, keine Luma-Konto-Cookies. Der Build beschränkt servergesteuerte HTTP-Anfragen auf HTTPS und YouTubes öffentliche Infrastruktur, deaktiviert Weiterleitungen sowie Credential-/Cookie-Speicher. Streaming hängt von Region, Video, YouTubes Änderungen und ggf. der Verfügbarkeit dieses Dienstes ab. Adaptive HLS-Streams können höhere Qualitäten liefern; kombinierte MP4-Fallbacks sind auf die tatsächlich verfügbaren Auflösungen begrenzt.
+Die Stream-Hilfe ist unter Einstellungen deaktivierbar. Falls lokale Extraktion scheitert, verwendet sie den öffentlichen Dienst `remote-production.youtubekit.dev`. Dieser erhält die Video-ID und öffentliche Antwortdaten, keine Luma-Konto-Cookies. Der Build beschränkt servergesteuerte HTTP-Anfragen auf HTTPS und YouTubes öffentliche Infrastruktur, deaktiviert Weiterleitungen sowie Credential-/Cookie-Speicher. Streaming hängt von Region, Video, YouTubes Änderungen und ggf. der Verfügbarkeit dieses Dienstes ab. HLS wird direkt abgespielt. Getrennte H.264-Bild- und AAC-Tonstreams werden mit `AVMutableComposition` in einem gemeinsamen AVPlayer synchronisiert; verfügbare Auflösungen lassen sich auswählen.
 
 Die CI-Design-Screenshots verwenden deutlich markierte Vorschau-Daten und prüfen die Oberfläche ohne Konto oder YouTube-Netzwerkzugriff. Der normale App-Start verwendet ausschließlich echte API-Antworten und zeigt Fehler statt erfundener Inhalte.
 

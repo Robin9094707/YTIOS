@@ -17,7 +17,7 @@ jobs:
   build:
     name: Test and build iPhone IPA
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Check Xcode and install project generator
@@ -32,7 +32,7 @@ jobs:
       - name: Resolve Swift packages
         run: xcodebuild -resolvePackageDependencies -project Luma.xcodeproj -scheme Luma
       - name: Unit tests and navigation screenshots
-        timeout-minutes: 12
+        timeout-minutes: 18
         run: |
           set -euo pipefail
           SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"] == "iPhone 17 Pro Max"))')
