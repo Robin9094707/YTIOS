@@ -1,0 +1,65 @@
+name: Luma
+options:
+  bundleIdPrefix: de.robin9094707
+  deploymentTarget:
+    iOS: '26.0'
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    SWIFT_STRICT_CONCURRENCY: targeted
+    MARKETING_VERSION: '1.0.0'
+    CURRENT_PROJECT_VERSION: '1'
+    CODE_SIGNING_ALLOWED: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+packages:
+  YouTubeAPI:
+    url: https://github.com/b5i/YouTubeKit.git
+    revision: 6532af39da4c1612b0a1af603792419d8fb0e67f
+  LumaStreams:
+    path: .vendor/LumaStreams
+targets:
+  Luma:
+    type: application
+    platform: iOS
+    sources: [Luma]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.robin9094707.YTIOS
+        INFOPLIST_FILE: Luma/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: '1,2'
+        GENERATE_INFOPLIST_FILE: NO
+    dependencies:
+      - package: YouTubeAPI
+        product: YouTubeKit
+      - package: LumaStreams
+        product: LumaStreams
+  LumaTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [Tests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Luma
+  LumaUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [UITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Luma
+schemes:
+  Luma:
+    build:
+      targets:
+        Luma: all
+    test:
+      targets: [LumaTests, LumaUITests]
+      gatherCoverageData: true
+    archive:
+      configuration: Release

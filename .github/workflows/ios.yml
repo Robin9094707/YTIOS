@@ -1,0 +1,75 @@
+name: Build Luma IPA
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: luma-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build iPhone IPA
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Xcode and install project generator
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          brew install xcodegen
+      - name: Prepare pinned stream module and app icon
+        run: python3 scripts/prepare.py
+      - name: Generate Xcode project
+        run: xcodegen generate
+      - name: Resolve Swift packages
+        run: xcodebuild -resolvePackageDependencies -project Luma.xcodeproj -scheme Luma
+      - name: Unit tests and navigation screenshots
+        run: |
+          set -euo pipefail
+          SIMULATOR_ID=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"] == "iPhone 17 Pro Max"))')
+          xcodebuild test -project Luma.xcodeproj -scheme Luma -destination "platform=iOS Simulator,id=$SIMULATOR_ID" -resultBundlePath build/Tests.xcresult CODE_SIGNING_ALLOWED=NO | tee test.log
+      - name: Archive unsigned device application
+        run: |
+          set -euo pipefail
+          xcodebuild archive -project Luma.xcodeproj -scheme Luma -configuration Release -destination 'generic/platform=iOS' -archivePath build/Luma.xcarchive CURRENT_PROJECT_VERSION=${{ github.run_number }} CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY='' | tee build.log
+      - name: Package and verify IPA
+        run: |
+          set -euo pipefail
+          python3 scripts/package_ipa.py build/Luma.xcarchive build/Luma-1.0.0.ipa
+          shasum -a 256 build/Luma-1.0.0.ipa > build/Luma-1.0.0.ipa.sha256
+      - name: Export design screenshots
+        if: always()
+        run: |
+          mkdir -p build/Screenshots
+          if [ -d build/Tests.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/Tests.xcresult --output-path build/Screenshots || true
+          fi
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Luma-IPA
+          path: |
+            build/Luma-1.0.0.ipa
+            build/Luma-1.0.0.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload tests and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Luma-Verification
+          path: |
+            build/Screenshots
+            build/Tests.xcresult
+            test.log
+            build.log
+          if-no-files-found: warn
+          retention-days: 14
