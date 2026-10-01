@@ -28,6 +28,7 @@ struct RootView: View {
     @State private var playerPresented = false
     @State private var settingsPresented = false
     @State private var loginPresented = false
+    @State private var libraryErrorShown = false
     @State private var tab = 0
     var body: some View {
         ZStack {
@@ -53,8 +54,8 @@ struct RootView: View {
         .sheet(isPresented: $loginPresented) { LoginSheet().presentationDragIndicator(.visible) }
         .onOpenURL { url in if let id = VideoLink.id(from: url.absoluteString) { open(Video(id: id)) } }
         .onChange(of: scenePhase) { _, phase in if phase != .active { playback.saveProgress() } }
-        .alert("Mediathek", isPresented: Binding(get: { library.persistenceError != nil }, set: { _ in })) {
-            Button("OK", role: .cancel) { }
+        .alert("Mediathek", isPresented: Binding(get: { library.persistenceError != nil && !libraryErrorShown }, set: { if !$0 { libraryErrorShown = true } })) {
+            Button("OK", role: .cancel) { libraryErrorShown = true }
         } message: { Text(library.persistenceError ?? "") }
     }
     private func open(_ video: Video) { playback.open(video); playerPresented = true }

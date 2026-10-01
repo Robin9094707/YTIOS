@@ -181,7 +181,7 @@ final class PlaybackStore: ObservableObject {
                 do { try await extract(generation: generation) }
                 catch {
                     guard generation == token, !Task.isCancelled else { return }
-                    loading = false; error = AppFailure.noStream.localizedDescription
+                    loading = false; self.error = AppFailure.noStream.localizedDescription
                 }
             }
         } else { player.pause(); loading = false; error = AppFailure.noStream.localizedDescription }
