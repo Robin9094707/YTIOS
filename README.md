@@ -2,6 +2,17 @@
 
 Ein unabhängiger, nativer YouTube-Client für iPhone und iPad mit **echtem iOS 26 Liquid Glass**. Ruhige dunkle Flächen, große Videokarten, violette und türkise Akzente und eine schwebende Systemnavigation. Kein Nachbau der klassischen YouTube-Oberfläche.
 
+## Version 1.1 · schnellerer Einstieg und neuer Player
+
+- Randloser Player am oberen Bildschirmrand, auch beim Scrollen der Details sichtbar; kompakte Fortschritts- und Transportsteuerung direkt darunter.
+- Leichte Player-Anfragen laufen parallel zur Konto-Metadatenanfrage. Verfügbare HLS- oder direkte MP4-URLs können ohne Download und Auswertung des großen JavaScript-Players starten. Der bisherige Extraktor bleibt als Rückfallquelle erhalten.
+- MP4 beginnt in der Automatik mit bis zu 720p. Höhere verfügbare Auflösungen bleiben wählbar. Drei Sekunden bevorzugter Startpuffer, danach acht Sekunden; der Pufferwert ist ein AVPlayer-Hinweis und keine garantierte Startzeit.
+- Stream-Adressen bleiben höchstens zehn Minuten im Arbeitsspeicher; Ablaufzeiten von Bild und Ton sowie Kontowechsel werden berücksichtigt. „Erneut versuchen“ verwirft den Cache.
+- Fortschritt und Untertitel haben einen eigenen Beobachtungszustand; der Sekundentakt aktualisiert nicht mehr sämtliche Videokarten und Details. Decodierte Vorschaubilder werden begrenzt zwischengespeichert.
+- Kommentare werden erst beim Aufklappen abgerufen. Untertitel verwenden dieselbe Metadatenantwort wie der Player. Fehler beim Laden von Kommentaren bleiben in ihrem Abschnitt.
+
+Diese Änderungen verkürzen den eigenen Vorbereitungspfad. Die Startzeit auf deinem Gerät hängt weiterhin von Video, Verbindung und YouTubes Antworten ab; eine gemessene Beschleunigung langer YouTube-Videos kann der CI-Runner allein nicht bestätigen.
+
 ## Funktionen
 
 - Entdecken und Suche nach Videos, Kanälen und Playlists; YouTube-Links und Shorts-Links direkt öffnen.
@@ -35,7 +46,7 @@ Bei jedem Push auf `main` sowie manuell unter **Actions → Build Luma IPA → R
 1. macOS 26 mit Xcode und XcodeGen verwenden.
 2. Exakt gepinnte Open-Source-Abhängigkeiten vorbereiten und den App-Icon-Katalog generieren.
 3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten, eine echte anonyme YouTube-Suche sowie einen AVPlayer-Abspieltest mit getrennten H.264-/AAC-Testdateien ausführen. Der Player-Test prüft Wiedergabefortschritt, beide Tracks und ein tatsächlich decodiertes Bild.
-4. Die native Navigation im iPhone-Simulator testen und fünf Design-Screenshots erzeugen.
+4. Die native Navigation im iPhone-Simulator testen und Design-Screenshots einschließlich des randlosen Players erzeugen.
 5. Ein echtes **arm64-Gerätearchiv** erstellen und als IPA mit `Payload/Luma.app` verpacken.
 6. ZIP-Integrität, Bundle-ID und ausführbare Datei kontrollieren; SHA-256 erzeugen.
 7. **Luma-IPA** und **Luma-Verification** als Actions-Artefakte bereitstellen.

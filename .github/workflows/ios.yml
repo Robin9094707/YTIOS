@@ -62,8 +62,8 @@ jobs:
       - name: Package and verify IPA
         run: |
           set -euo pipefail
-          python3 scripts/package_ipa.py build/Luma.xcarchive build/Luma-1.0.0.ipa
-          shasum -a 256 build/Luma-1.0.0.ipa > build/Luma-1.0.0.ipa.sha256
+          python3 scripts/package_ipa.py build/Luma.xcarchive build/Luma-1.1.0.ipa
+          shasum -a 256 build/Luma-1.1.0.ipa > build/Luma-1.1.0.ipa.sha256
       - name: Export design screenshots
         if: always()
         run: |
@@ -76,8 +76,8 @@ jobs:
         with:
           name: Luma-IPA
           path: |
-            build/Luma-1.0.0.ipa
-            build/Luma-1.0.0.ipa.sha256
+            build/Luma-1.1.0.ipa
+            build/Luma-1.1.0.ipa.sha256
           if-no-files-found: error
           retention-days: 30
       - name: Upload tests and screenshots

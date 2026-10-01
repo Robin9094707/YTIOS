@@ -27,7 +27,8 @@ struct PlayerSheet: View {
     @State private var comments: [YTComment] = []
     @State private var commentsToken: String?
     @State private var creationToken: String?
-    @State private var captionOptions: [YTCaption] = []
+    @State private var commentsExpanded = false
+    @State private var commentsError: String?
     @State private var commentText = ""
     @State private var busy = false
     @State private var commentsBusy = false
@@ -40,65 +41,88 @@ struct PlayerSheet: View {
     @State private var queuePresented = false
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 22) {
+            GeometryReader { geometry in
+                VStack(spacing: 0) {
                     videoSurface
-                    if let video = playback.video {
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(details?.videoTitle ?? video.title).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                        .frame(width: geometry.size.width, height: min(geometry.size.width * 9 / 16, geometry.size.height * 0.55))
+                        .overlay(alignment: .top) {
                             HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    if let channelID = details?.channel?.channelId ?? video.channelID {
-                                        NavigationLink {
-                                            ChannelView(channelID: channelID) { next in playback.open(next) }
-                                        } label: { Text(details?.channel?.name ?? video.channel).font(.headline).foregroundStyle(Palette.mint) }
-                                    } else { Text(video.channel).font(.headline).foregroundStyle(Palette.mint) }
-                                    if let views = details?.viewsCount.shortViewsCount ?? video.views { Text(views).font(.caption).foregroundStyle(.secondary) }
-                                }
+                                Button("Minimieren", systemImage: "chevron.down") { dismiss() }
+                                    .accessibilityIdentifier("minimizePlayerButton")
                                 Spacer()
-                                if let id = details?.channel?.channelId ?? video.channelID {
-                                    Button(subscribed ? "Abonniert" : "Abonnieren") {
-                                        if service.signedIn { Task { await subscription(id) } } else { loginPresented = true }
-                                    }.buttonStyle(.glass).disabled(busy)
-                                }
-                            }
+                                Button("Warteschlange", systemImage: "list.bullet") { queuePresented = true }
+                            }.labelStyle(.iconOnly).buttonStyle(.glass).tint(.white)
+                                .font(.headline).padding(.horizontal, 16)
+                                .padding(.top, max(geometry.safeAreaInsets.top, 14))
                         }
-                        actionBar(video)
-                        playbackOptions
-                        if let chapters = details?.chapters, !chapters.isEmpty {
-                            sectionTitle("Kapitel")
-                            ScrollView(.horizontal) {
-                                HStack {
-                                    ForEach(Array(chapters.enumerated()), id: \.offset) { _, chapter in
-                                        Button {
-                                            playback.seek(to: Double(chapter.startTimeSeconds ?? 0))
-                                        } label: {
-                                            VStack(alignment: .leading, spacing: 5) {
-                                                Text(chapter.title ?? "Kapitel").font(.caption.weight(.medium)).lineLimit(1)
-                                                Text(TimeText.format(Double(chapter.startTimeSeconds ?? 0))).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
-                                            }.frame(width: 145, alignment: .leading).padding(14)
-                                        }.buttonStyle(.glass)
+                    PlaybackProgress(playback: playback, clock: playback.clock)
+                        .padding(.horizontal, 20).padding(.vertical, 12).background(.thinMaterial)
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 22) {
+                            if let video = playback.video {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text(details?.videoTitle ?? video.title).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            if let channelID = details?.channel?.channelId ?? video.channelID {
+                                                NavigationLink {
+                                                    ChannelView(channelID: channelID) { next in playback.open(next) }.toolbar(.visible, for: .navigationBar)
+                                                } label: { Text(details?.channel?.name ?? video.channel).font(.headline).foregroundStyle(Palette.mint) }
+                                            } else { Text(video.channel).font(.headline).foregroundStyle(Palette.mint) }
+                                            if let views = details?.viewsCount.shortViewsCount ?? video.views { Text(views).font(.caption).foregroundStyle(.secondary) }
+                                        }
+                                        Spacer()
+                                        if let id = details?.channel?.channelId ?? video.channelID {
+                                            Button(subscribed ? "Abonniert" : "Abonnieren") {
+                                                if service.signedIn { Task { await subscription(id) } } else { loginPresented = true }
+                                            }.buttonStyle(.glass).disabled(busy)
+                                        }
                                     }
                                 }
-                            }.scrollIndicators(.hidden)
-                        }
-                        if let description = details?.videoDescription?.compactMap(\.text).joined(), !description.isEmpty {
-                            DisclosureGroup("Beschreibung") { Text(description).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled).padding(.top, 12) }
-                                .padding(18).lumaCard(corner: 20)
-                        }
-                        if let detailsError { InlineError(message: detailsError) { Task { await loadDetails() } } }
-                        commentsSection
-                        if let recommended = details?.recommendedVideos.compactMap({ $0 as? YTVideo }).map(Video.init).unique(), !recommended.isEmpty {
-                            sectionTitle("Weiter entdecken")
-                            ForEach(recommended.prefix(16)) { next in VideoRow(video: next) { playback.open(next) } }
-                        }
-                    }
-                }.padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 30)
-            }.background(AmbientBackground())
-                .navigationTitle("Dein Moment").navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Minimieren", systemImage: "chevron.down") { dismiss() } }
-                    ToolbarItem(placement: .topBarTrailing) { Button("Warteschlange", systemImage: "list.bullet") { queuePresented = true } }
+                                actionBar(video)
+                                playbackOptions
+                                if let chapters = details?.chapters, !chapters.isEmpty {
+                                    sectionTitle("Kapitel")
+                                    ScrollView(.horizontal) {
+                                        HStack {
+                                            ForEach(Array(chapters.enumerated()), id: \.offset) { _, chapter in
+                                                Button {
+                                                    playback.seek(to: Double(chapter.startTimeSeconds ?? 0))
+                                                } label: {
+                                                    VStack(alignment: .leading, spacing: 5) {
+                                                        Text(chapter.title ?? "Kapitel").font(.caption.weight(.medium)).lineLimit(1)
+                                                        Text(TimeText.format(Double(chapter.startTimeSeconds ?? 0))).font(.caption2.monospacedDigit()).foregroundStyle(.secondary)
+                                                    }.frame(width: 145, alignment: .leading).padding(14)
+                                                }.buttonStyle(.glass)
+                                            }
+                                        }
+                                    }.scrollIndicators(.hidden)
+                                }
+                                if let description = details?.videoDescription?.compactMap(\.text).joined(), !description.isEmpty {
+                                    DisclosureGroup("Beschreibung") { Text(description).font(.subheadline).foregroundStyle(.secondary).textSelection(.enabled).padding(.top, 12) }
+                                        .padding(18).lumaCard(corner: 20)
+                                }
+                                if let detailsError { InlineError(message: detailsError) { Task { await loadDetails() } } }
+                                DisclosureGroup(isExpanded: $commentsExpanded) {
+                                    commentsSection.padding(.top, 14)
+                                } label: {
+                                    HStack { Label("Kommentare", systemImage: "text.bubble"); Spacer(); Text(details?.commentsCount ?? "").font(.caption).foregroundStyle(.secondary) }
+                                }.padding(18).lumaCard(corner: 20)
+                                if let recommended = details?.recommendedVideos.compactMap({ $0 as? YTVideo }).map(Video.init).unique(), !recommended.isEmpty {
+                                    sectionTitle("Weiter entdecken")
+                                    ForEach(recommended.prefix(16)) { next in VideoRow(video: next) { playback.open(next) } }
+                                }
+                            }
+                        }.padding(.horizontal, 20).padding(.top, 24).padding(.bottom, 32)
+                    }.accessibilityIdentifier("playerDetailsScroll").scrollIndicators(.hidden)
+                }.background(AmbientBackground())
+            }.ignoresSafeArea(edges: .top)
+                .toolbar(.hidden, for: .navigationBar).statusBarHidden(true)
+                .onChange(of: commentsExpanded) { _, expanded in
+                    if expanded && comments.isEmpty { Task { await loadComments(initial: true) } }
+                }
+                .onChange(of: commentsToken) { _, token in
+                    if token != nil, commentsExpanded, comments.isEmpty, !commentsBusy { Task { await loadComments(initial: true) } }
                 }
                 .task(id: playback.video?.id) { await loadDetails() }
                 .sheet(isPresented: $loginPresented) { LoginSheet() }
@@ -111,24 +135,27 @@ struct PlayerSheet: View {
     }
     private var videoSurface: some View {
         ZStack {
-            NativePlayer(player: playback.player).aspectRatio(16/9, contentMode: .fit)
+            NativePlayer(player: playback.player)
             if playback.loading {
-                VStack(spacing: 10) { ProgressView().tint(.white); Text("Dein Video wird geladen").font(.caption) }
-                    .foregroundStyle(.white).padding(18).background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 16))
+                VStack(spacing: 12) {
+                    ProgressView().controlSize(.large).tint(.white)
+                    Text("Dein Video wird vorbereitet").font(.subheadline.weight(.medium))
+                    Text(playback.sourceLabel).font(.caption).foregroundStyle(.white.opacity(0.7))
+                }.foregroundStyle(.white).padding(22)
+                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 18))
             }
-            if playback.captionsEnabled, let caption = playback.activeCaption {
-                VStack { Spacer(); Text(caption).font(.subheadline.weight(.medium)).multilineTextAlignment(.center)
-                    .foregroundStyle(.white).padding(7).background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 6)).padding(.bottom, 40).padding(.horizontal, 15) }.allowsHitTesting(false)
+            if playback.captionsEnabled {
+                PlaybackCaptions(playback: playback, clock: playback.clock)
             }
-        }.background(.black).clipShape(RoundedRectangle(cornerRadius: 24))
-            .overlay(alignment: .bottom) {
-                if let error = playback.error {
-                    VStack(spacing: 10) {
-                        Text(error).font(.caption).multilineTextAlignment(.center)
-                        Button("Stream erneut laden") { playback.retry() }.buttonStyle(.glassProminent)
-                    }.foregroundStyle(.white).padding(16).frame(maxWidth: .infinity).background(.black.opacity(0.85))
-                }
+            if let error = playback.error {
+                VStack(spacing: 12) {
+                    Image(systemName: "wifi.exclamationmark").font(.title2)
+                    Text(error).font(.subheadline).multilineTextAlignment(.center)
+                    Button("Erneut versuchen") { playback.retry() }.buttonStyle(.glassProminent)
+                }.foregroundStyle(.white).padding(24).frame(maxWidth: .infinity, maxHeight: .infinity).background(.black.opacity(0.85))
             }
+        }.background(.black).clipped()
+            .accessibilityElement(children: .contain).accessibilityIdentifier("playerSurface")
     }
     private func actionBar(_ video: Video) -> some View {
         ScrollView(.horizontal) {
@@ -163,12 +190,12 @@ struct PlayerSheet: View {
             } label: { Label("Qualität", systemImage: "sparkles.rectangle.stack") }.buttonStyle(.glass)
             Menu {
                 Button("Aus") { playback.captionsEnabled = false }
-                ForEach(captionOptions, id: \.id) { caption in
+                ForEach(playback.captionOptions, id: \.id) { caption in
                     Button(caption.languageName) { Task {
                         do { try await playback.loadCaptions(caption) } catch { actionError = "Untertitel sind momentan nicht verfügbar." }
                     } }
                 }
-            } label: { Image(systemName: "captions.bubble") }.buttonStyle(.glass).disabled(captionOptions.isEmpty)
+            } label: { Image(systemName: "captions.bubble") }.buttonStyle(.glass).disabled(playback.captionOptions.isEmpty)
             Spacer(minLength: 0)
             Menu {
                 Button("Timer aus") { playback.sleep(after: nil) }
@@ -178,7 +205,6 @@ struct PlayerSheet: View {
     }
     private var commentsSection: some View {
         VStack(alignment: .leading, spacing: 16) {
-            sectionTitle("Kommentare", subtitle: details?.commentsCount)
             if service.signedIn, creationToken != nil {
                 HStack(alignment: .bottom) {
                     TextField("Dein Kommentar", text: $commentText, axis: .vertical).lineLimit(1...5).padding(12).lumaCard(corner: 14)
@@ -197,29 +223,26 @@ struct PlayerSheet: View {
                     if let likes = comment.likesCount { Label(likes, systemImage: "hand.thumbsup").font(.caption).foregroundStyle(.secondary) }
                 }.padding(16).lumaCard(corner: 18)
             }
+            if let commentsError { InlineError(message: commentsError) { Task { await loadComments(initial: comments.isEmpty) } } }
             if commentsBusy { ProgressView("Kommentare werden geladen") }
             if commentsToken != nil { Button("Weitere Kommentare") { Task { await loadComments() } }.buttonStyle(.glass).disabled(commentsBusy) }
             else if comments.isEmpty && !commentsBusy { Text("Für dieses Video sind gerade keine Kommentare verfügbar.").font(.caption).foregroundStyle(.secondary) }
         }
     }
     private func loadDetails() async {
-        details = nil; comments = []; captionOptions = []; creationToken = nil; commentsToken = nil; detailsError = nil; liked = false; subscribed = false
-        guard let id = playback.video?.id else { return }
+        details = nil; comments = []; commentsExpanded = false; commentsError = nil; commentsBusy = false; creationToken = nil; commentsToken = nil; detailsError = nil; liked = false; subscribed = false; commentText = ""; actionError = nil
+        guard let id = playback.video?.id, !ProcessInfo.processInfo.arguments.contains("-ui-testing") else { return }
         do {
             let response = try await MoreVideoInfosResponse.sendThrowingRequest(youtubeModel: service.model, data: [.query: id])
             guard !Task.isCancelled, playback.video?.id == id else { return }
             details = response; liked = response.authenticatedInfos?.likeStatus == .liked
             subscribed = response.authenticatedInfos?.subscriptionStatus == true
             commentsToken = response.commentsContinuationToken
-            if commentsToken != nil { await loadComments(initial: true) }
-            if let info = try? await VideoInfosResponse.sendThrowingRequest(youtubeModel: service.model, data: [.query: id]), playback.video?.id == id, !Task.isCancelled {
-                captionOptions = info.captions
-            }
         } catch { if playback.video?.id == id, !Task.isCancelled { detailsError = "Zusätzliche Videoinfos konnten nicht geladen werden." } }
     }
     private func loadComments(initial: Bool = false) async {
         guard !commentsBusy, let token = commentsToken, let id = playback.video?.id else { return }
-        commentsBusy = true; defer { commentsBusy = false }
+        commentsBusy = true; commentsError = nil; defer { if playback.video?.id == id { commentsBusy = false } }
         do {
             let new: [YTComment]; let next: String?
             if initial {
@@ -233,7 +256,7 @@ struct PlayerSheet: View {
             guard !Task.isCancelled, playback.video?.id == id else { return }
             var seen = Set(comments.map(\.commentIdentifier))
             comments += new.filter { seen.insert($0.commentIdentifier).inserted }; commentsToken = next
-        } catch { if playback.video?.id == id { actionError = "Kommentare konnten nicht geladen werden." } }
+        } catch { if playback.video?.id == id, !Task.isCancelled { commentsError = "Kommentare konnten nicht geladen werden." } }
     }
     private func like(_ video: Video) async {
         busy = true; defer { busy = false }
@@ -241,8 +264,9 @@ struct PlayerSheet: View {
         catch { actionError = error.localizedDescription }
     }
     private func subscription(_ id: String) async {
+        let videoID = playback.video?.id
         busy = true; defer { busy = false }
-        do { let next = !subscribed; try await service.setSubscription(channelID: id, subscribed: next); subscribed = next }
+        do { let next = !subscribed; try await service.setSubscription(channelID: id, subscribed: next); if playback.video?.id == videoID { subscribed = next } }
         catch { actionError = error.localizedDescription }
     }
     private func postComment() async {

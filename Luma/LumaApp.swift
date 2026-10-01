@@ -49,7 +49,7 @@ struct RootView: View {
             }
             .tabBarMinimizeBehavior(.onScrollDown)
         }
-        .sheet(isPresented: $playerPresented) { PlayerSheet().presentationDragIndicator(.visible).presentationDetents([.large]) }
+        .fullScreenCover(isPresented: $playerPresented) { PlayerSheet() }
         .sheet(isPresented: $settingsPresented) { SettingsView().presentationDragIndicator(.visible) }
         .sheet(isPresented: $loginPresented) { LoginSheet().presentationDragIndicator(.visible) }
         .onOpenURL { url in if let id = VideoLink.id(from: url.absoluteString) { open(Video(id: id)) } }

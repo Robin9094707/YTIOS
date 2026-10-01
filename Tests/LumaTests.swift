@@ -1,9 +1,57 @@
 import XCTest
 import AVFoundation
 import LumaStreams
+import Combine
 @testable import Luma
 
 final class LumaTests: XCTestCase {
+    func testStartupChoosesAdaptiveOr720pInsteadOfLargestFile() {
+        let url = URL(string: "https://example.com/video")!
+        let choices = [2160, 1080, 720, 360].map { PlaybackChoice(url: url.appendingPathComponent(String($0)), label: "Test", height: $0) }
+        XCTAssertEqual(PlaybackChoice.initial(in: choices)?.height, 720)
+        XCTAssertEqual(PlaybackChoice.initial(in: choices, cap: 480)?.height, 360)
+        XCTAssertEqual(PlaybackChoice.initial(in: choices, cap: 2160)?.height, 2160)
+        let hls = PlaybackChoice(url: url.appendingPathComponent("hls"), label: "HLS")
+        XCTAssertEqual(PlaybackChoice.initial(in: choices + [hls])?.id, hls.id)
+    }
+
+    func testFastPlayerResponseCanStartWithoutSignatureJavaScript() throws {
+        let hls = Data(#"{"streamingData":{"hlsManifestUrl":"https://example.com/master.m3u8"}}"#.utf8)
+        XCTAssertEqual(try FastStreamResolver.decode(hls).first?.url.path, "/master.m3u8")
+        let adaptive = Data(#"{"streamingData":{"adaptiveFormats":[{"url":"https://example.com/video","mimeType":"video/mp4; codecs=\"avc1.4d401f\"","height":720},{"url":"https://example.com/audio","mimeType":"audio/mp4; codecs=\"mp4a.40.2\""},{"mimeType":"video/mp4; codecs=\"avc1.4d401f\"","height":1080,"signatureCipher":"unresolved"}]}}"#.utf8)
+        let choices = try FastStreamResolver.decode(adaptive)
+        XCTAssertEqual(choices.count, 1)
+        XCTAssertEqual(choices.first?.audioURL?.path, "/audio")
+        XCTAssertEqual(choices.first?.height, 720)
+        XCTAssertTrue(try FastStreamResolver.decode(Data(#"{"playabilityStatus":{"status":"LOGIN_REQUIRED"}}"#.utf8)).isEmpty)
+    }
+
+    func testStreamCacheRejectsExpiringSignedURLsAndHonorsTTL() {
+        var cache = StreamCache()
+        let now = Date(timeIntervalSince1970: 1000)
+        let choice = PlaybackChoice(url: URL(string: "https://example.com/video?expire=1200")!, label: "Video", audioURL: URL(string: "https://example.com/audio?expire=1100")!)
+        cache.insert([choice], for: "one", now: now)
+        XCTAssertNotNil(cache.get("one", now: now.addingTimeInterval(39)))
+        XCTAssertNil(cache.get("one", now: now.addingTimeInterval(41)))
+        cache.insert([PlaybackChoice(url: URL(string: "https://example.com/video")!, label: "Video")], for: "two", now: now)
+        XCTAssertNil(cache.get("two", now: now.addingTimeInterval(601)))
+        cache.insert([choice], for: "three", now: now); cache.clear()
+        XCTAssertNil(cache.get("three", now: now))
+    }
+
+    @MainActor
+    func testPlaybackClockDoesNotInvalidateTheWholePlayerStore() {
+        let playback = PlaybackStore()
+        var broadcasts = 0
+        let subscription = playback.objectWillChange.sink { broadcasts += 1 }
+        playback.clock.seconds = 30
+        playback.clock.duration = 3600
+        XCTAssertEqual(playback.seconds, 30)
+        XCTAssertEqual(playback.duration, 3600)
+        XCTAssertEqual(broadcasts, 0)
+        withExtendedLifetime(subscription) { }
+    }
+
     @MainActor
     func testAdaptivePlayerDecodesPictureAndAdvancesSound() async throws {
         let bundle = Bundle(for: LumaTests.self)
@@ -15,14 +63,24 @@ final class LumaTests: XCTestCase {
     @MainActor
     func testAdaptivePublicVideoPlaysWithPictureAndSound() async throws {
         executionTimeAllowance = 240
-        // Blender's public Big Buck Bunny video exercises YouTube's real adaptive streams.
-        let streams = try await LumaStreams.YouTube(videoID: "aqz-KE-bpKQ", methods: [.local, .remote]).streams
-        print("Decoded streams:", streams.map { "\($0.videoResolution ?? 0)p, video=\(String(describing: $0.videoCodec)), audio=\(String(describing: $0.audioCodec))" })
-        let picture = try XCTUnwrap(streams.filter {
-            $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1
-        }.min { ($0.videoResolution ?? 0) < ($1.videoResolution ?? 0) })
-        let sound = try XCTUnwrap(streams.first { $0.includesAudioTrack && !$0.includesVideoTrack && $0.audioCodec == .mp4a })
-        try await assertPlayback(PlaybackChoice(url: picture.url, label: "Public YouTube integration test", audioURL: sound.url))
+        let playback = PlaybackStore()
+        playback.connect(service: YouTubeService(), library: LocalLibrary(inMemory: true))
+        playback.open(Video(id: "aqz-KE-bpKQ", title: "Big Buck Bunny"))
+        defer { playback.stop() }
+        let started = Date()
+        var output: AVPlayerItemVideoOutput?
+        for _ in 0..<180 {
+            if let error = playback.error { XCTFail(error); return }
+            if let item = playback.player.currentItem, output == nil {
+                let videoOutput = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+                item.add(videoOutput); output = videoOutput
+            }
+            if playback.seconds >= 2 { break }
+            try await Task.sleep(for: .seconds(1))
+        }
+        print("Public video time to two seconds of playback:", Date().timeIntervalSince(started), "source:", playback.sourceLabel)
+        XCTAssertGreaterThanOrEqual(playback.seconds, 2)
+        XCTAssertNotNil(output?.copyPixelBuffer(forItemTime: playback.player.currentTime(), itemTimeForDisplay: nil))
     }
 
     @MainActor

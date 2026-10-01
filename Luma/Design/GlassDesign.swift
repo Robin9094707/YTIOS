@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 enum Palette {
     static let violet = Color(red: 0.66, green: 0.53, blue: 1)
@@ -41,6 +42,7 @@ extension View {
 
 struct Thumbnail: View {
     var video: Video
+    @State private var image: UIImage?
     var body: some View {
         ZStack {
             LinearGradient(colors: [Palette.violet.opacity(0.55), Color.indigo.opacity(0.45), Palette.mint.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -49,12 +51,17 @@ struct Thumbnail: View {
                     .font(.system(size: 75, weight: .ultraLight)).foregroundStyle(.white.opacity(0.8))
                 Circle().stroke(.white.opacity(0.10), lineWidth: 1).padding(25)
             } else {
-                AsyncImage(url: video.thumbnail) { phase in
-                    if let image = phase.image { image.resizable().scaledToFill() }
-                    else { Image(systemName: "play.rectangle").font(.largeTitle).foregroundStyle(.white.opacity(0.65)) }
-                }
+                if let image { Image(uiImage: image).resizable().scaledToFill() }
+                else { Image(systemName: "play.rectangle").font(.largeTitle).foregroundStyle(.white.opacity(0.65)) }
             }
         }.clipped().accessibilityHidden(true)
+            .task(id: video.thumbnail) {
+                image = nil
+                guard !ProcessInfo.processInfo.arguments.contains("-ui-testing"), let url = video.thumbnail else { return }
+                let result = await ThumbnailStore.shared.image(for: url)
+                guard !Task.isCancelled else { return }
+                image = result
+            }
     }
 }
 

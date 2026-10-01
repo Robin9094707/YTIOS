@@ -5,20 +5,37 @@ import Combine
 import YouTubeKit
 import LumaStreams
 
-struct PlaybackChoice: Identifiable {
+struct PlaybackChoice: Identifiable, Sendable {
     var id: String { url.absoluteString }
     let url: URL
     let label: String
     var audioURL: URL? = nil
     var height: Int? = nil
+
+    static func initial(in choices: [PlaybackChoice], cap: Int = 0) -> PlaybackChoice? {
+        if let adaptive = choices.first(where: { $0.height == nil && $0.audioURL == nil }) { return adaptive }
+        let limit = cap > 0 ? cap : 720
+        let fitting = choices.filter { ($0.height ?? 0) <= limit }
+        return fitting.max { ($0.height ?? 0) < ($1.height ?? 0) }
+            ?? choices.min { ($0.height ?? 0) < ($1.height ?? 0) }
+    }
+}
+
+/// Only the small time/seek/caption views observe this clock. A tick must not
+/// invalidate every feed card, comment and navigation surface in the app.
+@MainActor
+final class PlaybackClock: ObservableObject {
+    @Published var seconds = 0.0
+    @Published var duration = 0.0
 }
 
 /// AVFoundation keeps separate adaptive video and audio tracks on one playback clock.
 enum NativeStreamPlayer {
     static func item(for choice: PlaybackChoice) async throws -> AVPlayerItem {
         guard let audioURL = choice.audioURL else { return AVPlayerItem(url: choice.url) }
-        let video = AVURLAsset(url: choice.url)
-        let audio = AVURLAsset(url: audioURL)
+        let options = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
+        let video = AVURLAsset(url: choice.url, options: options)
+        let audio = AVURLAsset(url: audioURL, options: options)
         async let videoTracks = video.loadTracks(withMediaType: .video)
         async let audioTracks = audio.loadTracks(withMediaType: .audio)
         async let videoDuration = video.load(.duration)
@@ -56,8 +73,10 @@ final class PlaybackStore: ObservableObject {
     @Published private(set) var loading = false
     @Published private(set) var playing = false
     @Published private(set) var error: String?
-    @Published private(set) var seconds = 0.0
-    @Published private(set) var duration = 0.0
+    let clock = PlaybackClock()
+    var seconds: Double { clock.seconds }
+    var duration: Double { clock.duration }
+    @Published private(set) var captionOptions: [YTCaption] = []
     @Published private(set) var choices: [PlaybackChoice] = []
     @Published private(set) var sourceLabel = ""
     @Published var queue: [Video] = []
@@ -66,6 +85,7 @@ final class PlaybackStore: ObservableObject {
     @Published var captions: [CaptionCue] = []
     @Published var captionsEnabled = false
     private var loadTask: Task<Void, Never>?
+    private var metadataTask: Task<Void, Never>?
     private var itemTask: Task<Void, Never>?
     private var itemToken = UUID()
     private var timeoutTask: Task<Void, Never>?
@@ -84,6 +104,10 @@ final class PlaybackStore: ObservableObject {
     private var lastSaved = 0.0
     private var remoteTargets: [(MPRemoteCommand, Any)] = []
     private var resumeAfterInterruption = false
+    private var cache = StreamCache()
+    private var accountRevision = -1
+    private var cacheSubscription: AnyCancellable?
+    private var activeChoice: PlaybackChoice?
     @Published private(set) var sleepMinutes: Int?
 
     init() {
@@ -94,9 +118,11 @@ final class PlaybackStore: ObservableObject {
         periodicObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
-                self.seconds = max(0, time.seconds.isFinite ? time.seconds : 0)
+                self.clock.seconds = max(0, time.seconds.isFinite ? time.seconds : 0)
                 let total = self.player.currentItem?.duration.seconds ?? 0
-                self.duration = total.isFinite ? max(0,total) : 0
+                let length = total.isFinite ? max(0,total) : 0
+                if self.clock.duration != length { self.clock.duration = length }
+                if self.seconds >= 8, (self.player.currentItem?.preferredForwardBufferDuration ?? 0) < 8 { self.player.currentItem?.preferredForwardBufferDuration = 8 }
                 if abs(self.seconds - self.lastSaved) >= 10 { self.saveProgress(); self.lastSaved = self.seconds }
                 self.updateNowPlaying()
             }
@@ -123,33 +149,54 @@ final class PlaybackStore: ObservableObject {
         configureRemoteCommands()
     }
 
-    func connect(service: YouTubeService, library: LocalLibrary) { self.service = service; self.library = library }
+    func connect(service: YouTubeService, library: LocalLibrary) {
+        self.service = service; self.library = library
+        cacheSubscription = service.$accountRevision.sink { [weak self] revision in
+            guard let self, revision != self.accountRevision else { return }
+            self.cache.clear(); self.accountRevision = revision
+        }
+    }
     func open(_ video: Video) {
-        saveProgress(); loadTask?.cancel(); itemTask?.cancel(); timeoutTask?.cancel()
+        saveProgress(); loadTask?.cancel(); metadataTask?.cancel(); itemTask?.cancel(); timeoutTask?.cancel()
         player.pause(); player.replaceCurrentItem(with: nil)
         token = UUID(); self.video = video; loading = true; error = nil
         choices = []; attemptedURLs = []; fallbackTried = false
-        captions = []; captionsEnabled = false; seconds = 0; duration = 0; lastSaved = 0
+        captions = []; captionOptions = []; captionsEnabled = false; clock.seconds = 0; clock.duration = 0; lastSaved = 0
         resumeAt = library?.progress(for: video) ?? 0
         sourceLabel = "Stream wird geladen"
         let currentToken = token
+        // Account-aware metadata and the lightweight anonymous player path race.
+        // Whichever installs a stream first starts playback; later metadata never
+        // replaces that item or rewinds the user's playback.
+        metadataTask = Task {
+            guard let service,
+                  let info = try? await VideoInfosResponse.sendThrowingRequest(youtubeModel: service.model, data: [.query: video.id]),
+                  currentToken == token, !Task.isCancelled else { return }
+            captionOptions = info.captions
+            if self.video?.title == "Video", let title = info.title { self.video?.title = title }
+            if let url = info.streamingURL, attemptedURLs.isEmpty {
+                loadTask?.cancel()
+                choices = [PlaybackChoice(url: url, label: "HLS · adaptiv")]
+                cache.insert(choices, for: video.id)
+                install(choices[0], generation: currentToken)
+            }
+        }
         loadTask = Task {
             do {
                 let audio = AVAudioSession.sharedInstance()
                 try audio.setCategory(.playback, mode: .moviePlayback)
                 try audio.setActive(true)
-                if let service {
-                    try? await service.ensureVisitor()
-                    if let info = try? await VideoInfosResponse.sendThrowingRequest(youtubeModel: service.model, data: [.query: video.id]) {
-                        guard currentToken == token, !Task.isCancelled else { return }
-                        if self.video?.title == "Video", let title = info.title { self.video?.title = title }
-                        if let url = info.streamingURL {
-                            choices = [PlaybackChoice(url: url, label: "HLS · adaptiv")]
-                            install(choices[0], generation: currentToken)
-                            return
-                        }
-                    }
+                if let cached = cache.get(video.id), let choice = PlaybackChoice.initial(in: cached, cap: quality) {
+                    choices = cached; install(choice, generation: currentToken); return
                 }
+                sourceLabel = "Direkte Wiedergabe wird vorbereitet"
+                let quick = try await FastStreamResolver.resolve(videoID: video.id, visitor: service?.model.visitorData ?? "")
+                guard currentToken == token, !Task.isCancelled, attemptedURLs.isEmpty else { return }
+                if let choice = PlaybackChoice.initial(in: quick, cap: quality) {
+                    choices = quick; cache.insert(quick, for: video.id)
+                    install(choice, generation: currentToken); return
+                }
+                sourceLabel = "Alternative Stream-Quelle wird geprüft"
                 try await extract(generation: currentToken)
             } catch {
                 guard currentToken == token, !Task.isCancelled else { return }
@@ -160,11 +207,12 @@ final class PlaybackStore: ObservableObject {
 
     private func extract(generation: UUID) async throws {
         guard let video, generation == token else { return }
+        let request = itemToken
         fallbackTried = true
         let remote = UserDefaults.standard.bool(forKey: "remoteFallback")
         let streams = try await LumaStreams.YouTube(videoID: video.id, methods: remote ? [.local, .remote] : [.local]).streams
         try Task.checkCancellation()
-        guard generation == token else { return }
+        guard generation == token, request == itemToken else { return }
         let supported = streams.filter { $0.includesVideoAndAudioTrack && $0.isNativelyPlayable }
             .sorted { ($0.videoResolution ?? 0) > ($1.videoResolution ?? 0) }
         choices = supported.map { PlaybackChoice(url: $0.url, label: "\($0.videoResolution ?? 0)p · MP4", height: $0.videoResolution) }
@@ -178,7 +226,8 @@ final class PlaybackStore: ObservableObject {
             }
         }
         guard let choice = choices.first else { throw AppFailure.noStream }
-        let initial = choices.first(where: { ($0.height ?? 0) <= (quality > 0 ? quality : 1080) }) ?? choice
+        cache.insert(choices, for: video.id)
+        let initial = PlaybackChoice.initial(in: choices, cap: quality) ?? choice
         install(initial, generation: generation)
     }
 
@@ -187,11 +236,12 @@ final class PlaybackStore: ObservableObject {
         attemptedURLs.insert(choice.url)
         timeoutTask?.cancel(); itemTask?.cancel(); itemObservation = nil
         itemToken = UUID()
+        activeChoice = choice
         let request = itemToken
         player.pause()
         sourceLabel = choice.label; loading = true; error = nil
         timeoutTask = Task {
-            try? await Task.sleep(for: .seconds(45))
+            try? await Task.sleep(for: .seconds(15))
             guard !Task.isCancelled, generation == token, request == itemToken, loading else { return }
             tryNextSource(generation: generation)
         }
@@ -208,7 +258,7 @@ final class PlaybackStore: ObservableObject {
     }
 
     private func attach(_ item: AVPlayerItem, generation: UUID, request: UUID) {
-        item.preferredForwardBufferDuration = 12
+        item.preferredForwardBufferDuration = 3
         if quality > 0 { item.preferredMaximumResolution = CGSize(width: CGFloat(quality) * 16 / 9, height: CGFloat(quality)) }
         itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
             Task { @MainActor in
@@ -231,8 +281,11 @@ final class PlaybackStore: ObservableObject {
 
     private func tryNextSource(generation: UUID) {
         guard generation == token else { return }
+        if let video { cache.remove(video.id) }
+        if seconds > 0 { resumeAt = seconds }
         itemObservation = nil; timeoutTask?.cancel()
-        if let next = choices.first(where: { !attemptedURLs.contains($0.url) }) { install(next, generation: generation) }
+        let remaining = choices.filter { !attemptedURLs.contains($0.url) }
+        if let next = PlaybackChoice.initial(in: remaining, cap: quality) { install(next, generation: generation) }
         else if !fallbackTried {
             loadTask?.cancel()
             loadTask = Task {
@@ -245,8 +298,8 @@ final class PlaybackStore: ObservableObject {
         } else { player.pause(); loading = false; error = AppFailure.noStream.localizedDescription }
     }
 
-    func choose(_ choice: PlaybackChoice) { resumeAt = seconds; install(choice, generation: token) }
-    func retry() { if let video { open(video) } }
+    func choose(_ choice: PlaybackChoice) { guard activeChoice?.id != choice.id else { return }; resumeAt = seconds; install(choice, generation: token) }
+    func retry() { if let video { cache.remove(video.id); open(video) } }
     func toggle() { if playing { player.pause(); saveProgress() } else { player.playImmediately(atRate: speed) } }
     func seek(to time: Double) {
         guard time.isFinite else { return }
@@ -258,16 +311,14 @@ final class PlaybackStore: ObservableObject {
         quality = height
         player.currentItem?.preferredMaximumResolution = height > 0 ? CGSize(width: CGFloat(height)*16/9, height: CGFloat(height)) : .zero
         // A composed MP4 has a fixed resolution; selecting a cap must replace its video track.
-        if player.currentItem?.asset is AVComposition,
-           let choice = choices.filter({ $0.audioURL != nil && ($0.height ?? 0) <= (height > 0 ? height : 1080) })
-            .max(by: { ($0.height ?? 0) < ($1.height ?? 0) }) {
+        if activeChoice?.height != nil, let choice = PlaybackChoice.initial(in: choices, cap: height) {
             choose(choice)
         }
     }
     func enqueue(_ video: Video) { if !queue.contains(where: { $0.id == video.id }) { queue.append(video) } }
     func next() { guard !queue.isEmpty else { return }; open(queue.removeFirst()) }
     func stop() {
-        saveProgress(); token = UUID(); loadTask?.cancel(); itemTask?.cancel(); timeoutTask?.cancel(); sleepTask?.cancel()
+        saveProgress(); token = UUID(); loadTask?.cancel(); metadataTask?.cancel(); itemTask?.cancel(); timeoutTask?.cancel(); sleepTask?.cancel()
         itemObservation = nil; player.pause(); player.replaceCurrentItem(with: nil)
         video = nil; playing = false; loading = false; sleepMinutes = nil; captions = []
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
