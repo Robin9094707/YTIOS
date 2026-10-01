@@ -35,7 +35,21 @@ remote_code = remote_code.replace('let request = serverMessage.content', '''let 
 remote_code = remote_code.replace('if !request.allowRedirects || request.applyCookiesOnRedirect {', 'if true {')
 remote_code = remote_code.replace('let configuration = URLSessionConfiguration.default', 'let configuration = URLSessionConfiguration.ephemeral\n                    configuration.httpCookieStorage = nil\n                    configuration.urlCredentialStorage = nil')
 remote_code = remote_code.replace('allowsRedirect: request.allowRedirects, applyCookiesOnRedirect: request.applyCookiesOnRedirect', 'allowsRedirect: false, applyCookiesOnRedirect: false')
+# Foundation decompresses HTTP bodies automatically. Request identity encoding
+# so the helper receives a body consistent with its forwarded response headers.
+remote_code = remote_code.replace('request.httpShouldHandleCookies = false', 'request.httpShouldHandleCookies = false\n                request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")')
+remote_code = remote_code.replace('let (data, response) = try await session.data(for: request.urlRequest)', '''let (data, response) = try await session.data(for: request.urlRequest)
+                    #if DEBUG
+                    print("Stream helper HTTP", request.url.host ?? "", (response as? HTTPURLResponse)?.statusCode ?? 0, data.count)
+                    #endif''')
 remote_file.write_text(remote_code)
+# An empty successful response must advance to the next extraction method too.
+stream_file = vendor / "Sources/YouTubeKit/YouTube.swift"
+stream_code = stream_file.read_text().replace('return streams\n#endif', 'guard !streams.isEmpty else { throw YouTubeKitError.extractError }\n                    return streams\n#endif')
+stream_code = stream_code.replace('return remoteStreams.compactMap { try? Stream(remoteStream: $0) }', '''let decoded = remoteStreams.compactMap { try? Stream(remoteStream: $0) }
+                    guard !decoded.isEmpty else { throw YouTubeKitError.extractError }
+                    return decoded''')
+stream_file.write_text(stream_code)
 assets = ROOT / "Luma/Resources/Assets.xcassets"
 icons = assets / "AppIcon.appiconset"
 icons.mkdir(parents=True, exist_ok=True)

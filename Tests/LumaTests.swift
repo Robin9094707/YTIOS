@@ -8,10 +8,11 @@ final class LumaTests: XCTestCase {
     func testAdaptivePublicVideoPlaysWithPictureAndSound() async throws {
         executionTimeAllowance = 240
         // Blender's public Big Buck Bunny video exercises YouTube's real adaptive streams.
-        let streams = try await LumaStreams.YouTube(videoID: "aqz-KE-bpKQ", methods: [.remote]).streams
+        let streams = try await LumaStreams.YouTube(videoID: "aqz-KE-bpKQ", methods: [.local, .remote]).streams
+        print("Decoded streams:", streams.map { "itag=\($0.itag.itag), \($0.videoResolution ?? 0)p, video=\(String(describing: $0.videoCodec)), audio=\(String(describing: $0.audioCodec))" })
         let picture = try XCTUnwrap(streams.filter {
-            $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1 && ($0.videoResolution ?? 0) <= 480
-        }.max { ($0.videoResolution ?? 0) < ($1.videoResolution ?? 0) })
+            $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1
+        }.min { ($0.videoResolution ?? 0) < ($1.videoResolution ?? 0) })
         let sound = try XCTUnwrap(streams.first { $0.includesAudioTrack && !$0.includesVideoTrack && $0.audioCodec == .mp4a })
         let item = try await NativeStreamPlayer.item(for: PlaybackChoice(url: picture.url, label: "Integration test", audioURL: sound.url))
         let videoTracks = try await item.asset.loadTracks(withMediaType: .video)

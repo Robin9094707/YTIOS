@@ -59,7 +59,7 @@ Für eine Geräteinstallation in Xcode unter Signing die eigene Team-ID wählen 
 - `Luma/Features`: Entdecken, Suche, Mediathek, Kontoanmeldung, Kanal, Player und Einstellungen.
 - `Luma/Core`: typisierte Domain-Modelle, YouTube-Service, Keychain, lokale Persistenz und ein gemeinsamer Player.
 - [b5i/YouTubeKit](https://github.com/b5i/YouTubeKit), MIT, Commit `6532af39da4c1612b0a1af603792419d8fb0e67f`: nicht öffentliche YouTube-Endpunkte für Konto, Suche, Feeds und Aktionen.
-- [alexeichhorn/YouTubeKit](https://github.com/alexeichhorn/YouTubeKit), MIT, Commit `e5b7d0396ce12bf3444f0d209e8436c83373b7af`: Stream-Extraktion. Der Build benennt nur dessen Swift-Modul in `LumaStreams` um, da beide Bibliotheken denselben Modulnamen besitzen.
+- [alexeichhorn/YouTubeKit](https://github.com/alexeichhorn/YouTubeKit), MIT, Commit `e5b7d0396ce12bf3444f0d209e8436c83373b7af`: Stream-Extraktion. Der Build benennt das Swift-Modul in `LumaStreams` um, beschränkt den anonymen Hilfsserver-Transport und behandelt leere Stream-Antworten als Grund, zur nächsten Quelle zu wechseln.
 - [Yattee](https://github.com/yattee/yattee): als Architekturvergleich untersucht; kein Yattee-Code übernommen.
 - [SmartTubeIOS](https://github.com/dnsnpl/smarttubeios): als Vergleich für native adaptive Wiedergabe untersucht; kein Code übernommen.
 
