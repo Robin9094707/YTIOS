@@ -49,6 +49,12 @@ final class LumaTests: XCTestCase {
         XCTAssertEqual(playback.seconds, 30)
         XCTAssertEqual(playback.duration, 3600)
         XCTAssertEqual(broadcasts, 0)
+        playback.seek(to: 420)
+        XCTAssertEqual(playback.seconds, 420, "The slider must not jump back while the asynchronous seek is pending")
+        playback.seek(to: 9000)
+        XCTAssertEqual(playback.seconds, 3600)
+        playback.seek(to: .nan)
+        XCTAssertEqual(playback.seconds, 3600)
         withExtendedLifetime(subscription) { }
     }
 

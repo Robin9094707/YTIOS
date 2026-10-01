@@ -36,26 +36,32 @@ enum NativeStreamPlayer {
         let options = [AVURLAssetPreferPreciseDurationAndTimingKey: false]
         let video = AVURLAsset(url: choice.url, options: options)
         let audio = AVURLAsset(url: audioURL, options: options)
-        async let videoTracks = video.loadTracks(withMediaType: .video)
-        async let audioTracks = audio.loadTracks(withMediaType: .audio)
-        async let videoDuration = video.load(.duration)
-        async let audioDuration = audio.load(.duration)
-        guard let sourceVideo = try await videoTracks.first,
-              let sourceAudio = try await audioTracks.first else { throw AppFailure.noStream }
-        let length = try await CMTimeMinimum(videoDuration, audioDuration)
-        guard length.seconds.isFinite, length.seconds > 0 else { throw AppFailure.noStream }
-        try Task.checkCancellation()
-        let composition = AVMutableComposition()
-        guard let picture = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
-              let sound = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw AppFailure.noStream
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            async let videoTracks = video.loadTracks(withMediaType: .video)
+            async let audioTracks = audio.loadTracks(withMediaType: .audio)
+            async let videoDuration = video.load(.duration)
+            async let audioDuration = audio.load(.duration)
+            guard let sourceVideo = try await videoTracks.first,
+                  let sourceAudio = try await audioTracks.first else { throw AppFailure.noStream }
+            let length = try await CMTimeMinimum(videoDuration, audioDuration)
+            guard length.seconds.isFinite, length.seconds > 0 else { throw AppFailure.noStream }
+            try Task.checkCancellation()
+            let composition = AVMutableComposition()
+            guard let picture = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid),
+                  let sound = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+                throw AppFailure.noStream
+            }
+            let range = CMTimeRange(start: .zero, duration: length)
+            try picture.insertTimeRange(range, of: sourceVideo, at: .zero)
+            try sound.insertTimeRange(range, of: sourceAudio, at: .zero)
+            picture.preferredTransform = try await sourceVideo.load(.preferredTransform)
+            try Task.checkCancellation()
+            return AVPlayerItem(asset: composition)
+        } onCancel: {
+            video.cancelLoading()
+            audio.cancelLoading()
         }
-        let range = CMTimeRange(start: .zero, duration: length)
-        try picture.insertTimeRange(range, of: sourceVideo, at: .zero)
-        try sound.insertTimeRange(range, of: sourceAudio, at: .zero)
-        picture.preferredTransform = try await sourceVideo.load(.preferredTransform)
-        try Task.checkCancellation()
-        return AVPlayerItem(asset: composition)
     }
 }
 
@@ -113,12 +119,13 @@ final class PlaybackStore: ObservableObject {
     init() {
         player.allowsExternalPlayback = true
         controlObservation = player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
-            Task { @MainActor in self?.playing = player.timeControlStatus == .playing }
+            Task { @MainActor in self?.playing = player.timeControlStatus != .paused }
         }
         periodicObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 600), queue: .main) { [weak self] time in
             Task { @MainActor in
                 guard let self else { return }
-                self.clock.seconds = max(0, time.seconds.isFinite ? time.seconds : 0)
+                let position = max(0, time.seconds.isFinite ? time.seconds : 0)
+                if self.clock.seconds != position { self.clock.seconds = position }
                 let total = self.player.currentItem?.duration.seconds ?? 0
                 let length = total.isFinite ? max(0,total) : 0
                 if self.clock.duration != length { self.clock.duration = length }
@@ -164,6 +171,11 @@ final class PlaybackStore: ObservableObject {
         captions = []; captionOptions = []; captionsEnabled = false; clock.seconds = 0; clock.duration = 0; lastSaved = 0
         resumeAt = library?.progress(for: video) ?? 0
         sourceLabel = "Stream wird geladen"
+        // UI layout tests are deliberately offline. Native picture/audio decoding
+        // is verified separately with the real AVPlayer integration fixture.
+        if ProcessInfo.processInfo.arguments.contains("-ui-testing") {
+            loading = false; sourceLabel = "Design-Vorschau"; return
+        }
         let currentToken = token
         // Account-aware metadata and the lightweight anonymous player path race.
         // Whichever installs a stream first starts playback; later metadata never
@@ -303,7 +315,10 @@ final class PlaybackStore: ObservableObject {
     func toggle() { if playing { player.pause(); saveProgress() } else { player.playImmediately(atRate: speed) } }
     func seek(to time: Double) {
         guard time.isFinite else { return }
-        player.seek(to: CMTime(seconds: max(0, duration > 0 ? min(time,duration) : time), preferredTimescale: 600))
+        let target = max(0, duration > 0 ? min(time,duration) : time)
+        clock.seconds = target
+        let tolerance = CMTime(seconds: 0.5, preferredTimescale: 600)
+        player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: tolerance, toleranceAfter: tolerance)
     }
     func skip(_ amount: Double) { seek(to: seconds + amount) }
     func setSpeed(_ value: Float) { speed = value; if playing { player.rate = value }; updateNowPlaying() }

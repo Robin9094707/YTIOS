@@ -29,6 +29,7 @@ struct PlayerSheet: View {
     @State private var creationToken: String?
     @State private var commentsExpanded = false
     @State private var commentsError: String?
+    @State private var detailsGeneration = UUID()
     @State private var commentText = ""
     @State private var busy = false
     @State private var commentsBusy = false
@@ -136,6 +137,13 @@ struct PlayerSheet: View {
     private var videoSurface: some View {
         ZStack {
             NativePlayer(player: playback.player)
+            if ProcessInfo.processInfo.arguments.contains("-ui-testing"), let video = playback.video {
+                Thumbnail(video: video)
+                    .overlay(alignment: .bottomLeading) {
+                        Label("DESIGN-VORSCHAU", systemImage: "sparkles").font(.caption2.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.8)).padding(16)
+                    }
+            }
             if playback.loading {
                 VStack(spacing: 12) {
                     ProgressView().controlSize(.large).tint(.white)
@@ -230,44 +238,47 @@ struct PlayerSheet: View {
         }
     }
     private func loadDetails() async {
+        detailsGeneration = UUID()
+        let generation = detailsGeneration
         details = nil; comments = []; commentsExpanded = false; commentsError = nil; commentsBusy = false; creationToken = nil; commentsToken = nil; detailsError = nil; liked = false; subscribed = false; commentText = ""; actionError = nil
         guard let id = playback.video?.id, !ProcessInfo.processInfo.arguments.contains("-ui-testing") else { return }
         do {
             let response = try await MoreVideoInfosResponse.sendThrowingRequest(youtubeModel: service.model, data: [.query: id])
-            guard !Task.isCancelled, playback.video?.id == id else { return }
+            guard !Task.isCancelled, playback.video?.id == id, generation == detailsGeneration else { return }
             details = response; liked = response.authenticatedInfos?.likeStatus == .liked
             subscribed = response.authenticatedInfos?.subscriptionStatus == true
             commentsToken = response.commentsContinuationToken
-        } catch { if playback.video?.id == id, !Task.isCancelled { detailsError = "Zusätzliche Videoinfos konnten nicht geladen werden." } }
+        } catch { if playback.video?.id == id, generation == detailsGeneration, !Task.isCancelled { detailsError = "Zusätzliche Videoinfos konnten nicht geladen werden." } }
     }
     private func loadComments(initial: Bool = false) async {
         guard !commentsBusy, let token = commentsToken, let id = playback.video?.id else { return }
-        commentsBusy = true; commentsError = nil; defer { if playback.video?.id == id { commentsBusy = false } }
+        let generation = detailsGeneration
+        commentsBusy = true; commentsError = nil; defer { if playback.video?.id == id, generation == detailsGeneration { commentsBusy = false } }
         do {
             let new: [YTComment]; let next: String?
             if initial {
                 let r = try await VideoCommentsResponse.sendThrowingRequest(youtubeModel: service.model, data: [.continuation: token])
-                guard !Task.isCancelled, playback.video?.id == id else { return }
+                guard !Task.isCancelled, playback.video?.id == id, generation == detailsGeneration else { return }
                 new = r.results; next = r.continuationToken; creationToken = r.commentCreationToken
             } else {
                 let r = try await VideoCommentsResponse.Continuation.sendThrowingRequest(youtubeModel: service.model, data: [.continuation: token])
                 new = r.results; next = r.continuationToken
             }
-            guard !Task.isCancelled, playback.video?.id == id else { return }
+            guard !Task.isCancelled, playback.video?.id == id, generation == detailsGeneration else { return }
             var seen = Set(comments.map(\.commentIdentifier))
             comments += new.filter { seen.insert($0.commentIdentifier).inserted }; commentsToken = next
-        } catch { if playback.video?.id == id, !Task.isCancelled { commentsError = "Kommentare konnten nicht geladen werden." } }
+        } catch { if playback.video?.id == id, generation == detailsGeneration, !Task.isCancelled { commentsError = "Kommentare konnten nicht geladen werden." } }
     }
     private func like(_ video: Video) async {
         busy = true; defer { busy = false }
         do { let next = !liked; try await service.setLike(videoID: video.id, liked: next); if playback.video?.id == video.id { liked = next } }
-        catch { actionError = error.localizedDescription }
+        catch { if playback.video?.id == video.id { actionError = error.localizedDescription } }
     }
     private func subscription(_ id: String) async {
         let videoID = playback.video?.id
         busy = true; defer { busy = false }
         do { let next = !subscribed; try await service.setSubscription(channelID: id, subscribed: next); if playback.video?.id == videoID { subscribed = next } }
-        catch { actionError = error.localizedDescription }
+        catch { if playback.video?.id == videoID { actionError = error.localizedDescription } }
     }
     private func postComment() async {
         guard let token = creationToken, let id = playback.video?.id else { return }
@@ -275,7 +286,7 @@ struct PlayerSheet: View {
         do {
             let new = try await service.postComment(text: commentText, token: token)
             if playback.video?.id == id { if let new { comments.insert(new, at: 0) }; commentText = "" }
-        } catch { actionError = error.localizedDescription }
+        } catch { if playback.video?.id == id { actionError = error.localizedDescription } }
     }
 }
 
