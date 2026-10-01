@@ -95,7 +95,7 @@ enum CookieParser {
         } else {
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             let raw = trimmed.lowercased().hasPrefix("cookie:") ? String(trimmed.dropFirst(7)) : trimmed
-            guard !raw.contains("\r"), !raw.contains("\n") else { throw AppFailure.invalidCookies }
+            guard !raw.utf8.contains(13), !raw.utf8.contains(10) else { throw AppFailure.invalidCookies }
             for part in raw.split(separator: ";") {
                 let pair = part.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
                 if pair.count == 2 { values[pair[0]] = pair[1] }
@@ -103,7 +103,7 @@ enum CookieParser {
         }
         values = values.filter { name, value in
             !name.isEmpty && name.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil &&
-            !value.isEmpty && !value.contains(";") && !value.contains("\r") && !value.contains("\n")
+            !value.isEmpty && !value.contains(";") && !value.utf8.contains(13) && !value.utf8.contains(10)
         }
         // YouTubeKit signs authenticated requests with SAPISID.
         if values["SAPISID"] == nil, let secure = values["__Secure-3PAPISID"] { values["SAPISID"] = secure }
