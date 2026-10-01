@@ -38,7 +38,11 @@ targets:
   LumaTests:
     type: bundle.unit-test
     platform: iOS
-    sources: [Tests]
+    sources:
+      - path: Tests
+        excludes: [Fixtures]
+      - path: Tests/Fixtures
+        buildPhase: resources
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

@@ -34,11 +34,13 @@ Bei jedem Push auf `main` sowie manuell unter **Actions → Build Luma IPA → R
 
 1. macOS 26 mit Xcode und XcodeGen verwenden.
 2. Exakt gepinnte Open-Source-Abhängigkeiten vorbereiten und den App-Icon-Katalog generieren.
-3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten, eine echte anonyme YouTube-Suche sowie einen AVPlayer-Abspieltest mit getrennten Bild- und Tonstreams ausführen.
+3. Unit-Tests zu Links, Cookie-Import, Domain-/Header-Prüfung, Fortschritt und Duplikaten, eine echte anonyme YouTube-Suche sowie einen AVPlayer-Abspieltest mit getrennten H.264-/AAC-Testdateien ausführen. Der Player-Test prüft Wiedergabefortschritt, beide Tracks und ein tatsächlich decodiertes Bild.
 4. Die native Navigation im iPhone-Simulator testen und fünf Design-Screenshots erzeugen.
 5. Ein echtes **arm64-Gerätearchiv** erstellen und als IPA mit `Payload/Luma.app` verpacken.
 6. ZIP-Integrität, Bundle-ID und ausführbare Datei kontrollieren; SHA-256 erzeugen.
 7. **Luma-IPA** und **Luma-Verification** als Actions-Artefakte bereitstellen.
+
+Zusätzlich läuft ein **optionaler echter YouTube-Abspieltest** mit Blenders öffentlichem Big-Buck-Bunny-Video. Sein Ergebnis und das Protokoll stehen ausdrücklich im Actions-Prüfbericht. Bei den bisherigen Runner-Tests lieferte YouTube keine abspielbaren Streams an den GitHub-Rechenzentrums-Client. Dieser externe Live-Check ist deshalb kein Build-Gate; ein grüner Build darf nicht als bestandener YouTube-Abspieltest ausgelegt werden. Die unabhängigen Player-Tests und die echte YouTube-Suche bleiben verpflichtend. Die selbst erzeugten sechssekündigen Farbtafel-/Sinus-Testdateien liegen ausschließlich im Test-Bundle und erscheinen nicht in der App.
 
 Die erzeugte IPA ist **unsigniert**. Sie kann mit einem eigenen Sideloading-Werkzeug und Apple-Account signiert werden. Sie ist kein automatisch installierbarer App-Store-/TestFlight-Build. Es sind keine Zertifikate, Provisioning-Profile oder privaten Schlüssel erforderlich, um den CI-Build auszuführen.
 

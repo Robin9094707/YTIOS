@@ -5,6 +5,14 @@ import LumaStreams
 
 final class LumaTests: XCTestCase {
     @MainActor
+    func testAdaptivePlayerDecodesPictureAndAdvancesSound() async throws {
+        let bundle = Bundle(for: LumaTests.self)
+        let picture = try XCTUnwrap(bundle.url(forResource: "Picture", withExtension: "mp4"))
+        let sound = try XCTUnwrap(bundle.url(forResource: "Sound", withExtension: "m4a"))
+        try await assertPlayback(PlaybackChoice(url: picture, label: "Generated integration fixture", audioURL: sound))
+    }
+
+    @MainActor
     func testAdaptivePublicVideoPlaysWithPictureAndSound() async throws {
         executionTimeAllowance = 240
         // Blender's public Big Buck Bunny video exercises YouTube's real adaptive streams.
@@ -14,11 +22,18 @@ final class LumaTests: XCTestCase {
             $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1
         }.min { ($0.videoResolution ?? 0) < ($1.videoResolution ?? 0) })
         let sound = try XCTUnwrap(streams.first { $0.includesAudioTrack && !$0.includesVideoTrack && $0.audioCodec == .mp4a })
-        let item = try await NativeStreamPlayer.item(for: PlaybackChoice(url: picture.url, label: "Integration test", audioURL: sound.url))
+        try await assertPlayback(PlaybackChoice(url: picture.url, label: "Public YouTube integration test", audioURL: sound.url))
+    }
+
+    @MainActor
+    private func assertPlayback(_ choice: PlaybackChoice) async throws {
+        let item = try await NativeStreamPlayer.item(for: choice)
         let videoTracks = try await item.asset.loadTracks(withMediaType: .video)
         let audioTracks = try await item.asset.loadTracks(withMediaType: .audio)
         XCTAssertEqual(videoTracks.count, 1)
         XCTAssertEqual(audioTracks.count, 1)
+        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(output)
         let player = AVPlayer(playerItem: item)
         defer { player.pause(); player.replaceCurrentItem(with: nil) }
         for _ in 0..<60 {
@@ -33,6 +48,7 @@ final class LumaTests: XCTestCase {
             try await Task.sleep(for: .seconds(1))
         }
         XCTAssertGreaterThanOrEqual(player.currentTime().seconds, 2, "Both tracks must actually advance on AVPlayer's playback clock")
+        XCTAssertNotNil(output.copyPixelBuffer(forItemTime: player.currentTime(), itemTimeForDisplay: nil), "The player must decode an actual picture frame")
     }
 
     @MainActor
