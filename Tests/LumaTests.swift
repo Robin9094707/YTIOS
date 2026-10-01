@@ -9,7 +9,7 @@ final class LumaTests: XCTestCase {
         executionTimeAllowance = 240
         // Blender's public Big Buck Bunny video exercises YouTube's real adaptive streams.
         let streams = try await LumaStreams.YouTube(videoID: "aqz-KE-bpKQ", methods: [.local, .remote]).streams
-        print("Decoded streams:", streams.map { "itag=\($0.itag.itag), \($0.videoResolution ?? 0)p, video=\(String(describing: $0.videoCodec)), audio=\(String(describing: $0.audioCodec))" })
+        print("Decoded streams:", streams.map { "\($0.videoResolution ?? 0)p, video=\(String(describing: $0.videoCodec)), audio=\(String(describing: $0.audioCodec))" })
         let picture = try XCTUnwrap(streams.filter {
             $0.includesVideoTrack && !$0.includesAudioTrack && $0.videoCodec == .avc1
         }.min { ($0.videoResolution ?? 0) < ($1.videoResolution ?? 0) })
